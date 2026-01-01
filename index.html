@@ -51,16 +51,21 @@
       </div>
 
       <div class="flex flex-col gap-2 w-full md:w-auto">
-        <label class="cursor-pointer bg-white text-black font-bold py-3 px-6 rounded-lg hover:bg-gray-200 transition text-center">
-            <span>📂 Открыть JSON / ZIP</span>
-            <input id="fileInput" type="file" accept=".json,.zip" class="hidden"/>
+         <!-- Основная кнопка загрузки -->
+       <label class="cursor-pointer bg-white text-black font-bold py-3 px-6 rounded-lg hover:bg-gray-200 transition text-center shadow-[0_0_15px_rgba(255,255,255,0.3)]">
+      <span>📂 Открыть JSON / ZIP</span>
+      <input id="fileInput" type="file" accept=".json,.zip,application/json,application/zip,application/x-zip-compressed" class="hidden"/>
         </label>
 
+           <!-- Кнопка вызова инструкции -->
+          <button onclick="document.getElementById('helpModal').classList.remove('hidden')" class="text-xs text-gray-500 hover:text-white underline text-center mt-1">
+           ❓ Где взять этот файл?
+          </button>
+
         <div id="controls" class="hidden flex gap-2">
-          <select id="yearSelect" class="bg-[#111] border border-[#333] text-white py-3 px-4 rounded-lg outline-none w-full font-mono"></select>
-        </div>
-        <div id="status" class="text-xs text-gray-500 text-center h-4"></div>
-      </div>
+       <select id="yearSelect" class="bg-[#111] border border-[#333] text-white py-3 px-4 rounded-lg outline-none w-full font-mono"></select>
+       </div>
+          <div id="status" class="text-xs text-gray-500 text-center h-4"></div>
     </div>
 
     <!-- DASHBOARD -->
@@ -445,6 +450,43 @@
 
     </div>
   </div>
+  <!-- MODAL: ИНСТРУКЦИЯ -->
+<div id="helpModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+  <div class="bg-[#111] border border-[#333] rounded-2xl max-w-md w-full p-6 relative shadow-2xl">
+    
+    <button onclick="document.getElementById('helpModal').classList.add('hidden')" class="absolute top-4 right-4 text-gray-500 hover:text-white">✕</button>
+    
+    <h3 class="text-xl font-bold text-white mb-4">Как получить данные?</h3>
+    
+    <ol class="space-y-4 text-sm text-gray-300 list-decimal pl-4">
+      <li>
+        <span class="text-white font-bold">Открой TikTok</span><br>
+        Профиль ➝ Меню (≡) ➝ Настройки и конфиденциальность.
+      </li>
+      <li>
+        <span class="text-white font-bold">Запроси архив</span><br>
+        Аккаунт ➝ Скачать ваши данные.
+      </li>
+      <li class="p-2 bg-red-900/20 border border-red-900/50 rounded-lg">
+        <span class="text-red-400 font-bold">⚠️ ВАЖНО:</span><br>
+        В разделе "Формат файла" выбери <span class="text-white font-bold">JSON</span>. <br>
+        (Формат TXT не сработает!)
+      </li>
+      <li>
+        <span class="text-white font-bold">Жди</span><br>
+        TikTok собирает данные от 1 до 3 дней. Тебе придет уведомление.
+      </li>
+      <li>
+        <span class="text-white font-bold">Скачай и загрузи сюда</span><br>
+        Скачай ZIP-архив на телефон и выбери его в этом приложении.
+      </li>
+    </ol>
+
+    <button onclick="document.getElementById('helpModal').classList.add('hidden')" class="w-full bg-[#222] hover:bg-[#333] text-white font-bold py-3 rounded-lg mt-6 transition">
+      Понятно
+    </button>
+  </div>
+</div>
 
 <script>
 // Инициализация Telegram Web App
