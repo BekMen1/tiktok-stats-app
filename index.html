@@ -1,0 +1,1441 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TikTok Stats: Deep Dive+</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/plugin/customParseFormat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/locale/ru.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+    body { font-family: 'Inter', sans-serif; background-color: #050505; color: #eee; }
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: #111; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #555; }
+
+    .glass { background: #111; border: 1px solid #222; border-radius: 16px; }
+    .neon-red { color: #FE2C55; }
+    .neon-cyan { color: #25F4EE; }
+
+    .border-top-grad-views { border-top: 4px solid; border-image: linear-gradient(to right, #ffffff, #999999) 1; }
+    .border-top-grad-likes { border-top: 4px solid; border-image: linear-gradient(to right, #FE2C55, #FF0050) 1; }
+    .border-top-grad-comms { border-top: 4px solid; border-image: linear-gradient(to right, #25F4EE, #00F0FF) 1; }
+    .border-top-grad-misc { border-top: 4px solid; border-image: linear-gradient(to right, #FFD700, #FFA500) 1; }
+    .border-top-grad-content { border-top: 4px solid; border-image: linear-gradient(to right, #7C3AED, #EC4899) 1; }
+    .border-top-grad-sec { border-top: 4px solid; border-image: linear-gradient(to right, #34D399, #22C55E) 1; }
+
+    @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+    .loading { animation: pulse 1s infinite; color: #25F4EE; }
+  </style>
+</head>
+
+<body class="min-h-screen p-4 md:p-10">
+
+  <div class="max-w-7xl mx-auto">
+
+    <!-- HEADER -->
+    <div class="flex flex-col md:flex-row justify-between items-center gap-6 mb-8 border-b border-gray-800 pb-8">
+      <div class="w-full md:w-auto">
+        <h1 class="text-4xl md:text-5xl font-black tracking-tight text-white mb-2">
+          TIKTOK <span class="neon-red">DEEP DIVE</span><span class="text-gray-600">+</span>
+        </h1>
+        <p class="text-gray-500 text-sm">Аналитика из TikTok JSON/ZIP: контент, аудитория, безопасность, сообщения, Off-TikTok.</p>
+        <div id="profileSummary" class="mt-3 text-xs text-gray-400 font-mono"></div>
+      </div>
+
+      <div class="flex flex-col gap-2 w-full md:w-auto">
+        <label class="cursor-pointer bg-white text-black font-bold py-3 px-6 rounded-lg hover:bg-gray-200 transition text-center">
+            <span>📂 Открыть JSON / ZIP</span>
+            <input id="fileInput" type="file" accept=".json,.zip" class="hidden"/>
+        </label>
+
+        <div id="controls" class="hidden flex gap-2">
+          <select id="yearSelect" class="bg-[#111] border border-[#333] text-white py-3 px-4 rounded-lg outline-none w-full font-mono"></select>
+        </div>
+        <div id="status" class="text-xs text-gray-500 text-center h-4"></div>
+      </div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div id="dashboard" class="hidden space-y-12">
+
+      <!-- 1. ПРОСМОТРЫ -->
+      <section>
+          <div class="glass p-8 border-top-grad-views relative overflow-hidden">
+             <div class="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+             <div class="flex items-center justify-between gap-3 mb-6 flex-wrap">
+                 <h2 class="text-2xl font-black text-white uppercase tracking-wider">Просмотры</h2>
+                 <div class="text-xs text-gray-500 font-mono">
+                   Сессии: <span id="mSessions" class="text-white">—</span> · Ср. видео/сессию: <span id="mSessionAvg" class="text-white">—</span>
+                 </div>
+             </div>
+             <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                 <div class="space-y-4">
+                     <div class="bg-[#1a1a1a] p-6 rounded-xl border border-[#333]">
+                         <div class="text-xs text-gray-500 font-bold uppercase tracking-widest mb-1">Просмотрено</div>
+                         <div id="mViews" class="text-4xl font-black text-white">—</div>
+                     </div>
+                     <div class="bg-[#1a1a1a] p-6 rounded-xl border border-[#333]">
+                         <div class="text-xs text-gray-500 font-bold uppercase tracking-widest mb-1">≈ Время</div>
+                         <div id="mTime" class="text-4xl font-black text-gray-200">—</div>
+                         <div id="mDays" class="text-sm text-gray-500 mt-1">дней</div>
+                         <div class="text-[10px] text-gray-600 mt-2 font-mono">оценка: ~20 сек/видео</div>
+                     </div>
+                     <div id="alertBox" class="hidden border border-yellow-600/30 bg-yellow-900/10 p-4 rounded-xl">
+                        <p class="text-xs text-yellow-500 font-bold">⚠️ Данные не полные</p>
+                        <p class="text-xs text-gray-400 mt-1">История просмотров может быть ограничена: TikTok иногда хранит не всё. Осталась активность.</p>
+                     </div>
+                 </div>
+                 <div class="lg:col-span-2 bg-[#1a1a1a] p-4 rounded-xl border border-[#333] flex flex-col">
+                     <div class="flex-1 min-h-[250px] relative"><canvas id="chartViews"></canvas></div>
+                 </div>
+             </div>
+          </div>
+      </section>
+
+      <!-- 2. ЛАЙКИ -->
+      <section>
+        <div class="glass p-8 border-top-grad-likes relative overflow-hidden">
+             <div class="absolute top-0 right-0 w-64 h-64 bg-red-600/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+             <div class="flex items-center justify-between gap-3 mb-6 flex-wrap">
+                 <h2 class="text-2xl font-black text-neon-red uppercase tracking-wider">Лайки</h2>
+                 <div class="text-xs text-gray-500 font-mono">
+                   Первый: <span id="firstLikeDate" class="text-white">—</span> · Последний: <span id="lastLikeDate" class="text-white">—</span>
+                 </div>
+             </div>
+             <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                 <div class="lg:col-span-2 grid grid-cols-1 gap-4">
+                     <div class="bg-[#1a1a1a] p-6 rounded-xl border border-[#333]">
+                         <div class="text-xs text-gray-500 font-bold uppercase tracking-widest mb-1">Всего лайков (ты поставил)</div>
+                         <div id="mLikes" class="text-4xl font-black text-neon-red">—</div>
+                     </div>
+                     <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] min-h-[200px]">
+                         <div class="h-[200px] w-full"><canvas id="chartLikes"></canvas></div>
+                     </div>
+                 </div>
+                 <div class="flex flex-col gap-4">
+                     <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333]">
+                         <div class="text-[10px] text-gray-500 uppercase mb-1">Первый лайк</div>
+                         <div class="flex justify-between items-center">
+                             <div id="firstLikeDateBox" class="font-mono text-white text-sm">—</div>
+                             <a id="firstLikeLink" href="#" target="_blank" class="text-[10px] bg-neon-red text-black font-bold px-2 py-1 rounded">Смотреть</a>
+                         </div>
+                     </div>
+                     <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333]">
+                         <div class="text-[10px] text-gray-500 uppercase mb-1">Последний лайк</div>
+                         <div class="flex justify-between items-center">
+                             <div id="lastLikeDateBox" class="font-mono text-white text-sm">—</div>
+                             <a id="lastLikeLink" href="#" target="_blank" class="text-[10px] bg-neon-red text-black font-bold px-2 py-1 rounded">Смотреть</a>
+                         </div>
+                     </div>
+                     <div class="flex-1 bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col">
+                        <div class="bg-[#151515] p-3 text-xs font-bold text-gray-500 uppercase border-b border-[#333]">Список лайков</div>
+                        <div class="overflow-y-auto h-[250px]">
+                            <table class="w-full text-left"><tbody id="likesTableBody" class="text-sm font-mono text-gray-300"></tbody></table>
+                        </div>
+                     </div>
+                 </div>
+             </div>
+        </div>
+      </section>
+
+      <!-- 3. КОММЕНТАРИИ -->
+      <section>
+        <div class="glass p-8 border-top-grad-comms relative overflow-hidden">
+             <div class="absolute top-0 right-0 w-64 h-64 bg-cyan-600/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+             <div class="flex items-center justify-between gap-3 mb-6 flex-wrap">
+                 <h2 class="text-2xl font-black text-neon-cyan uppercase tracking-wider">Комментарии</h2>
+                 <div class="text-xs text-gray-500 font-mono">
+                   Топ слово/эмодзи: <span id="topCommentToken" class="text-white">—</span>
+                 </div>
+             </div>
+             <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                 <div class="lg:col-span-1 space-y-4">
+                     <div class="bg-[#1a1a1a] p-6 rounded-xl border border-[#333]">
+                         <div class="text-xs text-gray-500 font-bold uppercase tracking-widest mb-1">Всего</div>
+                         <div id="mComments" class="text-4xl font-black text-neon-cyan">—</div>
+                     </div>
+                     <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] min-h-[200px]">
+                         <div class="h-[200px] w-full"><canvas id="chartComments"></canvas></div>
+                     </div>
+                     <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333]">
+                       <div class="text-[10px] text-gray-500 uppercase mb-1">Топ токены (быстро)</div>
+                       <div id="commentTokens" class="text-xs font-mono text-gray-300 leading-relaxed">—</div>
+                     </div>
+                 </div>
+                 <div class="lg:col-span-2 bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col">
+                    <div class="bg-[#151515] p-3 text-xs font-bold text-gray-500 uppercase border-b border-[#333]">Тексты</div>
+                    <div class="overflow-y-auto h-[400px]">
+                        <table class="w-full text-left">
+                            <thead class="bg-[#151515] sticky top-0 text-xs text-gray-500 uppercase"><tr><th class="p-3 w-32">Дата</th><th class="p-3">Текст</th><th class="p-3 w-10"></th></tr></thead>
+                            <tbody id="commentsTableBody" class="text-sm font-mono text-gray-300"></tbody>
+                        </table>
+                    </div>
+                 </div>
+             </div>
+        </div>
+      </section>
+
+      <!-- 0. CONTENT & AUDIENCE OVERVIEW (перенесено после Комментариев) -->
+      <section>
+        <div class="glass p-8 border-top-grad-content relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-64 h-64 bg-purple-600/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+          <div class="flex items-center justify-between gap-3 mb-6 flex-wrap">
+            <h2 class="text-2xl font-black text-white uppercase tracking-wider">Контент и рост</h2>
+            <div id="dataWarnings" class="text-xs text-gray-500 font-mono"></div>
+          </div>
+
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+              <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Постов</div>
+              <div id="statPosts" class="text-2xl font-bold text-white">-</div>
+              <div id="statPostsRate" class="text-[10px] text-gray-500 mt-1">—</div>
+            </div>
+            <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+              <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Лайков на постах</div>
+              <div id="statPostLikes" class="text-2xl font-bold text-white">-</div>
+              <div id="statPostLikesAvg" class="text-[10px] text-gray-500 mt-1">—</div>
+            </div>
+            <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+              <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Новые подписчики</div>
+              <div id="statNewFollowers" class="text-2xl font-bold text-white">-</div>
+              <div id="statNet" class="text-[10px] text-gray-500 mt-1">—</div>
+            </div>
+            <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+              <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Удалено постов</div>
+              <div id="statDeleted" class="text-2xl font-bold text-white">-</div>
+              <div id="statDeletedLife" class="text-[10px] text-gray-500 mt-1">—</div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333]">
+              <div class="text-xs text-gray-500 font-bold uppercase tracking-widest mb-2">Лучшее время публикации (по лайкам)</div>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="bg-[#111] border border-[#222] rounded-lg p-3">
+                  <div class="text-[10px] text-gray-500 uppercase">Час</div>
+                  <div id="bestHour" class="text-white font-black text-xl">—</div>
+                  <div id="bestHourMeta" class="text-[10px] text-gray-500 font-mono mt-1">—</div>
+                </div>
+                <div class="bg-[#111] border border-[#222] rounded-lg p-3">
+                  <div class="text-[10px] text-gray-500 uppercase">День недели</div>
+                  <div id="bestWeekday" class="text-white font-black text-xl">—</div>
+                  <div id="bestWeekdayMeta" class="text-[10px] text-gray-500 font-mono mt-1">—</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="lg:col-span-2 bg-[#1a1a1a] p-4 rounded-xl border border-[#333]">
+              <div class="text-xs text-gray-500 font-bold uppercase tracking-widest mb-2">Посты и лайки по месяцам</div>
+              <div class="h-[240px] w-full"><canvas id="chartPosts"></canvas></div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+            <div class="bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col h-[320px]">
+              <div class="bg-[#151515] p-3 text-xs font-bold text-purple-300 uppercase border-b border-[#333]">🏆 Топ постов по лайкам</div>
+              <div class="overflow-y-auto flex-1">
+                <table class="w-full text-left">
+                  <thead class="bg-[#151515] sticky top-0 text-xs text-gray-500 uppercase">
+                    <tr><th class="p-3 w-28">Дата</th><th class="p-3 w-20 text-right">Лайки</th><th class="p-3">Звук</th><th class="p-3 w-10"></th></tr>
+                  </thead>
+                  <tbody id="topPostsTableBody" class="text-sm font-mono text-gray-300"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col h-[320px]">
+              <div class="bg-[#151515] p-3 text-xs font-bold text-pink-300 uppercase border-b border-[#333]">🎵 Топ звуков в твоих постах</div>
+              <div class="overflow-y-auto flex-1">
+                <table class="w-full text-left">
+                  <thead class="bg-[#151515] sticky top-0 text-xs text-gray-500 uppercase">
+                    <tr><th class="p-3">Звук</th><th class="p-3 w-16 text-right">Посты</th><th class="p-3 w-24 text-right">Лайки/пост</th></tr>
+                  </thead>
+                  <tbody id="topSoundsPostsTableBody" class="text-sm font-mono text-gray-300"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- 4. LIVE, SHOP, SOUNDS (DEEP DIVE) -->
+      <section>
+        <div class="glass p-8 border-top-grad-misc relative overflow-hidden">
+             <div class="flex items-center justify-between gap-3 mb-6 flex-wrap">
+                 <h2 class="text-2xl font-black text-yellow-500 uppercase tracking-wider">Live & Shop (Deep Dive)</h2>
+                 <div class="text-xs text-gray-500 font-mono">
+                   Off-TikTok событий: <span id="statOffTikTok" class="text-white">—</span>
+                 </div>
+             </div>
+
+             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                 <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+                     <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Смотрел Live</div>
+                     <div id="statLiveWatch" class="text-2xl font-bold text-white">-</div>
+                 </div>
+                 <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+                     <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Покупки</div>
+                     <div id="statShop" class="text-2xl font-bold text-white">-</div>
+                 </div>
+                 <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+                     <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Сохр. Музыка</div>
+                     <div id="statSounds" class="text-2xl font-bold text-white">-</div>
+                 </div>
+                 <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+                     <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Новые подписки</div>
+                     <div id="statFollow" class="text-2xl font-bold text-white">-</div>
+                 </div>
+             </div>
+
+             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                 <div class="bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col h-[300px]">
+                     <div class="bg-[#151515] p-3 text-xs font-bold text-yellow-500 uppercase border-b border-[#333]">🛍️ История покупок (Shop)</div>
+                     <div class="overflow-y-auto flex-1">
+                         <table class="w-full text-left">
+                             <tbody id="shopTableBody" class="text-sm font-mono text-gray-300"></tbody>
+                         </table>
+                     </div>
+                 </div>
+
+                 <div class="bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col h-[300px]">
+                     <div class="bg-[#151515] p-3 text-xs font-bold text-neon-cyan uppercase border-b border-[#333]">🎵 Сохраненная музыка</div>
+                     <div class="overflow-y-auto flex-1">
+                         <table class="w-full text-left">
+                             <tbody id="soundsTableBody" class="text-sm font-mono text-gray-300"></tbody>
+                         </table>
+                     </div>
+                 </div>
+
+                 <div class="bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col h-[300px]">
+                     <div class="bg-[#151515] p-3 text-xs font-bold text-neon-red uppercase border-b border-[#333]">📡 История просмотров LIVE</div>
+                     <div class="overflow-y-auto flex-1">
+                         <table class="w-full text-left">
+                             <tbody id="liveTableBody" class="text-sm font-mono text-gray-300"></tbody>
+                         </table>
+                     </div>
+                 </div>
+
+                 <div class="bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col h-[300px]">
+                     <div class="bg-[#151515] p-3 text-xs font-bold text-white uppercase border-b border-[#333]">👥 На кого подписался</div>
+                     <div class="overflow-y-auto flex-1">
+                         <table class="w-full text-left">
+                             <tbody id="followTableBody" class="text-sm font-mono text-gray-300"></tbody>
+                         </table>
+                     </div>
+                 </div>
+             </div>
+
+             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+               <div class="bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col h-[260px]">
+                 <div class="bg-[#151515] p-3 text-xs font-bold text-yellow-300 uppercase border-b border-[#333]">🌐 Off-TikTok Activity: топ источники</div>
+                 <div class="overflow-y-auto flex-1">
+                   <table class="w-full text-left">
+                     <thead class="bg-[#151515] sticky top-0 text-xs text-gray-500 uppercase">
+                       <tr><th class="p-3">Source</th><th class="p-3 w-16 text-right">События</th></tr>
+                     </thead>
+                     <tbody id="offTikTokTableBody" class="text-sm font-mono text-gray-300"></tbody>
+                   </table>
+                 </div>
+               </div>
+
+               <div class="bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col h-[260px]">
+                 <div class="bg-[#151515] p-3 text-xs font-bold text-gray-200 uppercase border-b border-[#333]">⚙️ Срез настроек (из файла)</div>
+                 <div class="p-4 text-xs font-mono text-gray-300 leading-relaxed" id="settingsBox">—</div>
+               </div>
+             </div>
+        </div>
+      </section>
+
+      <!-- 5. SECURITY & MESSAGES -->
+      <section>
+        <div class="glass p-8 border-top-grad-sec relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-64 h-64 bg-green-600/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+
+          <div class="flex items-center justify-between gap-3 mb-6 flex-wrap">
+            <h2 class="text-2xl font-black text-green-300 uppercase tracking-wider">Безопасность и сообщения</h2>
+            <div class="text-xs text-gray-500 font-mono">
+              Логинов: <span id="statLogins" class="text-white">—</span> · Устройств: <span id="statDevices" class="text-white">—</span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+              <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Уникальных IP</div>
+              <div id="statIPs" class="text-2xl font-bold text-white">-</div>
+            </div>
+            <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+              <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Новых устройств (в период)</div>
+              <div id="statNewDevices" class="text-2xl font-bold text-white">-</div>
+            </div>
+            <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+              <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Сообщений</div>
+              <div id="statDMs" class="text-2xl font-bold text-white">-</div>
+              <div id="statDMsInOut" class="text-[10px] text-gray-500 mt-1">—</div>
+            </div>
+            <div class="bg-[#1a1a1a] p-4 rounded-xl border border-[#333] text-center">
+              <div class="text-[10px] text-gray-500 font-bold uppercase mb-1">Топ чат</div>
+              <div id="statTopChat" class="text-sm font-bold text-white truncate px-2">-</div>
+              <div id="statTopChatCount" class="text-[10px] text-gray-500 mt-1">—</div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-1 bg-[#1a1a1a] p-4 rounded-xl border border-[#333]">
+              <div class="text-xs text-gray-500 font-bold uppercase tracking-widest mb-2">Логины по месяцам</div>
+              <div class="h-[240px] w-full"><canvas id="chartLogins"></canvas></div>
+            </div>
+
+            <div class="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div class="bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col h-[240px]">
+                <div class="bg-[#151515] p-3 text-xs font-bold text-green-200 uppercase border-b border-[#333]">🔐 Устройства (топ)</div>
+                <div class="overflow-y-auto flex-1">
+                  <table class="w-full text-left">
+                    <thead class="bg-[#151515] sticky top-0 text-xs text-gray-500 uppercase">
+                      <tr><th class="p-3">Device</th><th class="p-3 w-16 text-right">Логины</th></tr>
+                    </thead>
+                    <tbody id="devicesTableBody" class="text-sm font-mono text-gray-300"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="bg-[#0a0a0a] rounded-xl border border-[#333] overflow-hidden flex flex-col h-[240px]">
+                <div class="bg-[#151515] p-3 text-xs font-bold text-green-200 uppercase border-b border-[#333]">💬 Чаты (топ)</div>
+                <div class="overflow-y-auto flex-1">
+                  <table class="w-full text-left">
+                    <thead class="bg-[#151515] sticky top-0 text-xs text-gray-500 uppercase">
+                      <tr><th class="p-3">Chat</th><th class="p-3 w-16 text-right">Msg</th></tr>
+                    </thead>
+                    <tbody id="chatsTableBody" class="text-sm font-mono text-gray-300"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      </section>
+
+      <!-- НИЖНИЙ РАЗДЕЛ (Поиск, Репосты, Видео) -->
+      <section class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="glass p-6">
+            <h3 class="font-bold mb-4 text-gray-300">🔍 Поиск</h3>
+            <div id="searchList" class="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-2"></div>
+        </div>
+        <div class="glass p-6">
+            <h3 class="font-bold mb-4 text-gray-300">↗️ Репосты</h3>
+            <div id="shareList" class="flex flex-col gap-3"></div>
+        </div>
+        <div class="glass p-6">
+            <h3 class="font-bold mb-4 text-gray-300">📹 Твои видео</h3>
+            <div class="overflow-x-auto max-h-[300px]">
+                <table class="w-full text-left text-sm"><tbody id="postsTableBody" class="text-gray-300 font-mono"></tbody></table>
+            </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+<script>
+// Инициализация Telegram Web App
+if (window.Telegram && window.Telegram.WebApp) {
+    window.Telegram.WebApp.ready();
+    window.Telegram.WebApp.expand(); // Разворачивает на весь экран
+    
+    // Опционально: покрасить шапку Телеграма в черный цвет вашего фона
+    window.Telegram.WebApp.setHeaderColor('#050505'); 
+    window.Telegram.WebApp.setBackgroundColor('#050505'); 
+}    
+dayjs.extend(dayjs_plugin_customParseFormat);
+dayjs.locale('ru');
+
+Chart.defaults.color = '#666';
+Chart.defaults.borderColor = '#222';
+Chart.defaults.font.family = "'Inter', sans-serif";
+
+const $ = (id) => document.getElementById(id);
+
+let STATE = {
+  data: null,
+  years: [],
+  profile: null,
+  settings: null
+};
+
+// ---------- UTIL ----------
+function parseDate(v) {
+  if (v === null || v === undefined) return null;
+
+  if (typeof v === 'number') {
+    if (v > 1000000000000) return new Date(v);              // ms
+    if (v > 1000000000) return dayjs.unix(v).toDate();      // sec
+    return null;
+  }
+
+  const s0 = String(v).trim();
+  if (!s0) return null;
+
+  // numeric string unix timestamp
+  const sNum = s0.replace(/\s+/g,'');
+  if (/^\d{10,13}$/.test(sNum)) {
+    const n = Number(sNum);
+    if (!Number.isFinite(n)) return null;
+    return sNum.length === 13 ? new Date(n) : dayjs.unix(n).toDate();
+  }
+
+  // cleanup "(UTC +00)" suffix etc
+  const s = s0.replace(/\s*\(UTC.*\)$/i, "").trim();
+
+  const formats = [
+    "YYYY-MM-DD HH:mm:ss",
+    "YYYY-MM-DD",
+    "YYYY/MM/DD HH:mm:ss",
+    "DD/MM/YYYY hh:mm:ssA",
+    "DD/MM/YYYY h:mm:ssA",
+    "DD/MM/YYYY HH:mm:ss",
+    "DD/MM/YYYY",
+  ];
+
+  for (const f of formats) {
+    const d = dayjs(s, f, true);
+    if (d.isValid()) return d.toDate();
+  }
+
+  const fallback = new Date(s);
+  return isNaN(fallback.getTime()) ? null : fallback;
+}
+
+function getYear(d) { return d ? dayjs(d).format("YYYY") : null; }
+
+function walk(root, visitor) {
+  const stack = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || typeof node !== 'object') continue;
+
+    visitor(node);
+
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) stack.push(node[i]);
+    } else {
+      for (const k in node) stack.push(node[k]);
+    }
+  }
+}
+
+function collectArrayByKey(root, key, out) {
+  walk(root, (node) => {
+    if (!node || typeof node !== 'object') return;
+    if (Object.prototype.hasOwnProperty.call(node, key)) {
+      const v = node[key];
+      if (Array.isArray(v)) out.push(...v);
+    }
+  });
+}
+
+function collectFirstObjectByKey(root, key) {
+  let found = null;
+  walk(root, (node) => {
+    if (found) return;
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return;
+    if (Object.prototype.hasOwnProperty.call(node, key)) {
+      const v = node[key];
+      if (v && typeof v === 'object' && !Array.isArray(v)) found = v;
+    }
+  });
+  return found;
+}
+
+function getLink(x) { return x?.Link || x?.link || x?.Url || x?.url || x?.VideoLink || x?.AIGenImageURL || ""; }
+
+function extractFirstUrl(text) {
+  const s = String(text || "");
+  const m = s.match(/https?:\/\/\S+/);
+  if (!m) return "";
+  return m[0].replace(/[)\],]+$/g, "");
+}
+
+function getCommentText(x) { return x?.Comment || x?.comment || x?.CommentContent || x?.text || "Текст не найден"; }
+function getShopItem(x) { return x?.ProductName || x?.ItemName || x?.Title || x?.product_name || "Товар без названия"; }
+function getSoundName(x) { return x?.SoundName || x?.Title || x?.MusicName || x?.Sound || "Трек без названия"; }
+function getUserName(x) { return x?.UserName || x?.Username || x?.user_name || x?.ContactName || "Пользователь"; }
+
+function toInt(v) {
+  const n = Number(String(v ?? "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function median(nums) {
+  const a = nums.filter(n => Number.isFinite(n)).slice().sort((x,y)=>x-y);
+  if (!a.length) return 0;
+  const mid = Math.floor(a.length/2);
+  return a.length % 2 ? a[mid] : (a[mid-1] + a[mid]) / 2;
+}
+
+function groupByMonthCount(arr) {
+  const r = Array(12).fill(0);
+  arr.forEach(x => { const d = x?._date; if (!d) return; r[dayjs(d).month()]++; });
+  return r;
+}
+
+function groupByMonthSum(arr, valueFn) {
+  const r = Array(12).fill(0);
+  arr.forEach(x => {
+    const d = x?._date; if (!d) return;
+    const m = dayjs(d).month();
+    r[m] += valueFn(x) || 0;
+  });
+  return r;
+}
+
+function simpleTokenize(text) {
+  const s = String(text || "").toLowerCase();
+  const words = s
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[0-9]/g, " ")
+    .split(/[\s.,!?:;"'(){}\[\]\-_/\\|<>@#%^&*+=~`]+/g)
+    .filter(w => w && w.length >= 2);
+
+  const emoji = (String(text || "").match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu) || []);
+  return [...emoji, ...words];
+}
+
+function bestAvgByKey(items, keyFn, valFn) {
+  const m = new Map();
+  items.forEach(it => {
+    const key = keyFn(it);
+    const v = valFn(it);
+    const cur = m.get(key) || { count: 0, sum: 0 };
+    cur.count++;
+    cur.sum += v;
+    m.set(key, cur);
+  });
+  let best = null;
+  for (const [k, {count, sum}] of m.entries()) {
+    const avg = count ? sum / count : 0;
+    if (!best || avg > best.avg) best = { key: k, avg, count, sum };
+  }
+  return best;
+}
+
+function computeSessions(watchArr, gapMinutes = 30) {
+  const a = watchArr.slice().sort((x,y)=>x._date - y._date);
+  const gap = gapMinutes * 60 * 1000;
+  const sessions = [];
+  let cur = null;
+
+  for (const it of a) {
+    if (!it._date) continue;
+    if (!cur) {
+      cur = { start: it._date, end: it._date, count: 1 };
+      continue;
+    }
+    const dt = it._date - cur.end;
+    if (dt <= gap) {
+      cur.end = it._date;
+      cur.count++;
+    } else {
+      sessions.push(cur);
+      cur = { start: it._date, end: it._date, count: 1 };
+    }
+  }
+  if (cur) sessions.push(cur);
+  return sessions;
+}
+
+// ---------- EXTRACTORS ----------
+function extractWatchLiveMap(root, out) {
+  walk(root, (node) => {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return;
+    if (!Object.prototype.hasOwnProperty.call(node, "WatchLiveMap")) return;
+
+    const map = node.WatchLiveMap;
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return;
+
+    for (const liveId in map) {
+      const v = map[liveId];
+      if (!v || typeof v !== 'object') continue;
+      out.push({
+        ...v,
+        _liveId: liveId,
+        WatchTime: v.WatchTime || v.watchTime || v.Time || v.Date,
+        Link: v.Link || v.link || ""
+      });
+    }
+  });
+}
+
+function extractDMs(root, out) {
+  walk(root, (node) => {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return;
+    for (const k in node) {
+      if (typeof k !== 'string') continue;
+      const low = k.toLowerCase();
+      if (!low.startsWith("chat history with")) continue;
+
+      const arr = node[k];
+      if (!Array.isArray(arr)) continue;
+
+      const chat = k.replace(/^Chat History with\s*/i, "").replace(/:$/,"").trim();
+      for (const msg of arr) {
+        out.push({
+          ...msg,
+          _chat: chat,
+          _link: extractFirstUrl(msg?.Content || msg?.content || "")
+        });
+      }
+    }
+  });
+}
+
+// ---------- FILE PROCESS ----------
+async function processFile(file) {
+  $("status").innerText = "Обработка...";
+  $("status").classList.add("loading");
+
+  let jsons = [];
+  if (file.name.endsWith(".zip")) {
+    const zip = await JSZip.loadAsync(file);
+    const files = Object.keys(zip.files).filter(n => n.toLowerCase().endsWith(".json"));
+    for (const f of files) {
+      const txt = await zip.files[f].async("string");
+      try { jsons.push(JSON.parse(txt)); } catch(e) {}
+    }
+  } else {
+    const txt = await file.text();
+    jsons.push(JSON.parse(txt));
+  }
+
+  if (!jsons.length) throw new Error("JSON не найден");
+
+  const raw = {
+    videoLists: [],
+    likes: [],
+    comments: [],
+    searches: [],
+    shares: [],
+    liveWatch: [],
+    sounds: [],
+    shop: [],
+    following: [],
+    followers: [],
+    deletedPosts: [],
+    logins: [],
+    offTikTok: [],
+    dms: [],
+    settingsMaps: [],
+    profileMaps: []
+  };
+
+  jsons.forEach(root => {
+    collectArrayByKey(root, "VideoList", raw.videoLists);
+    collectArrayByKey(root, "ItemFavoriteList", raw.likes);
+    collectArrayByKey(root, "CommentsList", raw.comments);
+    collectArrayByKey(root, "SearchList", raw.searches);
+    collectArrayByKey(root, "ShareHistoryList", raw.shares);
+
+    extractWatchLiveMap(root, raw.liveWatch);
+    collectArrayByKey(root, "FavoriteSoundList", raw.sounds);
+
+    collectArrayByKey(root, "OrderHistories", raw.shop);
+    collectArrayByKey(root, "OrderHistoryList", raw.shop);
+    collectArrayByKey(root, "OrderHistoriesList", raw.shop);
+
+    collectArrayByKey(root, "Following", raw.following);
+    collectArrayByKey(root, "FansList", raw.followers);
+
+    collectArrayByKey(root, "PostList", raw.deletedPosts);
+
+    collectArrayByKey(root, "LoginHistoryList", raw.logins);
+
+    collectArrayByKey(root, "OffTikTokActivityDataList", raw.offTikTok);
+
+    extractDMs(root, raw.dms);
+
+    const settingsMap = collectFirstObjectByKey(root, "SettingsMap");
+    if (settingsMap) raw.settingsMaps.push(settingsMap);
+
+    const profileMap = collectFirstObjectByKey(root, "ProfileMap");
+    if (profileMap) raw.profileMaps.push(profileMap);
+  });
+
+  const onlyWatch = raw.videoLists.filter(x => !Object.prototype.hasOwnProperty.call(x, "Likes"));
+  const onlyPosts = raw.videoLists.filter(x => Object.prototype.hasOwnProperty.call(x, "Likes"));
+
+  const clean = (arr, type) => {
+    const out = [];
+    const seen = new Set();
+
+    for (const x of arr) {
+      let d =
+        parseDate(x?.Date) ||
+        parseDate(x?.date) ||
+        parseDate(x?.Time) ||
+        parseDate(x?.WatchTime) ||
+        parseDate(x?.OrderTime) ||
+        parseDate(x?.TimeStamp);
+
+      if (type === 'deleted') {
+        const dd = parseDate(x?.DateDeleted);
+        d = dd || d;
+      }
+
+      if (!d) continue;
+
+      const link = getLink(x) || x?._link || extractFirstUrl(x?.Content || "");
+      const item = { ...x, _date: d, Link: link };
+
+      if (type === 'comment') item.Comment = getCommentText(x);
+      if (type === 'shop') item.Product = getShopItem(x);
+      if (type === 'sound') item.Sound = getSoundName(x);
+      if (type === 'user') item.User = getUserName(x);
+      if (type === 'dm') {
+        item.Chat = x?._chat || "Chat";
+        item.From = x?.From || x?.from || "";
+        item.Content = x?.Content || x?.content || "";
+        item.MsgLink = x?._link || extractFirstUrl(item.Content);
+      }
+      if (type === 'off') {
+        item.Source = x?.Source || x?.source || "Unknown";
+        item.Event = x?.Event || x?.event || "Unknown";
+      }
+      if (type === 'login') {
+        item.IP = x?.IP || x?.ip || "";
+        item.DeviceModel = x?.DeviceModel || x?.device_model || x?.Device || "Unknown";
+        item.NetworkType = x?.NetworkType || x?.network_type || "Unknown";
+        item.Carrier = x?.Carrier || x?.carrier || "Unknown";
+        item.DeviceSystem = x?.DeviceSystem || x?.device_system || "";
+      }
+      if (type === 'post') {
+        item.LikesN = toInt(x?.Likes);
+        item.Sound = x?.Sound || "";
+      }
+      if (type === 'deleted') {
+        item.CreatedAt = parseDate(x?.Date) || null;
+        item.DeletedAt = parseDate(x?.DateDeleted) || null;
+        item.LikesN = toInt(x?.Likes);
+      }
+
+      const dedupeKey = [
+        item._date?.getTime() || 0,
+        type,
+        item.Link || "",
+        item.User || item.Chat || "",
+        item.Comment || item.Product || item.Source || item.DeviceModel || ""
+      ].join("|");
+
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      out.push(item);
+    }
+
+    return out.sort((a,b) => a._date - b._date);
+  };
+
+  STATE.profile = raw.profileMaps.length ? raw.profileMaps[raw.profileMaps.length - 1] : null;
+  STATE.settings = raw.settingsMaps.length ? raw.settingsMaps[raw.settingsMaps.length - 1] : null;
+
+  STATE.data = {
+    watch: clean(onlyWatch, 'watch'),
+    likes: clean(raw.likes, 'like'),
+    comments: clean(raw.comments, 'comment'),
+    searches: clean(raw.searches, 'search'),
+    shares: clean(raw.shares, 'share'),
+    posts: clean(onlyPosts, 'post'),
+    liveWatch: clean(raw.liveWatch, 'live'),
+    sounds: clean(raw.sounds, 'sound'),
+    shop: clean(raw.shop, 'shop'),
+    following: clean(raw.following, 'user'),
+    followers: clean(raw.followers, 'user'),
+    deletedPosts: clean(raw.deletedPosts, 'deleted'),
+    logins: clean(raw.logins, 'login'),
+    offTikTok: clean(raw.offTikTok, 'off'),
+    dms: clean(raw.dms, 'dm')
+  };
+
+  // Years from ALL datasets
+  const years = new Set();
+  Object.values(STATE.data).forEach(arr => arr.forEach(x => years.add(getYear(x._date))));
+  const list = Array.from(years).filter(Boolean).sort().reverse();
+
+  // ВАЖНО: ALL в конце, первым — самый свежий год
+  STATE.years = list.length ? [...list, "ALL"] : ["ALL"];
+
+  renderProfileSummary();
+  return STATE.years;
+}
+
+function renderProfileSummary() {
+  const pm = STATE.profile;
+  if (!pm) { $("profileSummary").innerText = ""; return; }
+
+  const username = pm.userName || pm.username || "";
+  const displayName = pm.displayName || pm.Name || "";
+  const followerCount = pm.followerCount ?? pm.FollowerCount;
+  const followingCount = pm.followingCount ?? pm.FollowingCount;
+  const likesReceived = pm.likesReceived ?? pm.LikesReceived;
+
+  const parts = [];
+  if (displayName || username) parts.push(`${displayName ? displayName : ""}${username ? " @" + username : ""}`.trim());
+  if (Number.isFinite(followerCount)) parts.push(`followers: ${Number(followerCount).toLocaleString()}`);
+  if (Number.isFinite(followingCount)) parts.push(`following: ${Number(followingCount).toLocaleString()}`);
+  if (likesReceived !== undefined && likesReceived !== null && String(likesReceived) !== "") parts.push(`likes received: ${String(likesReceived)}`);
+  $("profileSummary").innerText = parts.join(" · ");
+}
+
+// ---------- RENDER ----------
+function renderUI(year) {
+  const d = STATE.data;
+
+  const filter = (arr) => year === "ALL" ? arr : arr.filter(x => getYear(x._date) === year);
+
+  const curr = {
+    watch: filter(d.watch),
+    likes: filter(d.likes),
+    comments: filter(d.comments),
+    searches: filter(d.searches),
+    shares: filter(d.shares),
+    posts: filter(d.posts),
+    liveWatch: filter(d.liveWatch),
+    sounds: filter(d.sounds),
+    shop: filter(d.shop),
+    following: filter(d.following),
+    followers: filter(d.followers),
+    deletedPosts: filter(d.deletedPosts),
+    logins: filter(d.logins),
+    offTikTok: filter(d.offTikTok),
+    dms: filter(d.dms),
+  };
+
+  // ---------- CONTENT & GROWTH ----------
+  const postsCount = curr.posts.length;
+  const postLikesSum = curr.posts.reduce((acc,p)=>acc + (p.LikesN || toInt(p.Likes)), 0);
+  const likesArr = curr.posts.map(p => p.LikesN || toInt(p.Likes));
+  const postLikesAvg = postsCount ? postLikesSum / postsCount : 0;
+  const postLikesMed = median(likesArr);
+
+  $("statPosts").innerText = postsCount.toLocaleString();
+  $("statPostLikes").innerText = postLikesSum.toLocaleString();
+  $("statPostLikesAvg").innerText = postsCount ? `ср: ${Math.round(postLikesAvg).toLocaleString()} · мед: ${Math.round(postLikesMed).toLocaleString()}` : "—";
+
+  if (postsCount >= 2) {
+    const first = curr.posts[0]._date;
+    const last = curr.posts[curr.posts.length-1]._date;
+    const days = Math.max(1, dayjs(last).diff(dayjs(first), 'day'));
+    const perWeek = postsCount / (days/7);
+    $("statPostsRate").innerText = `≈ ${perWeek.toFixed(2)} поста/нед`;
+  } else {
+    $("statPostsRate").innerText = "—";
+  }
+
+  const bestH = bestAvgByKey(curr.posts, p => dayjs(p._date).hour(), p => (p.LikesN || toInt(p.Likes)));
+  const weekNames = ["Вс","Пн","Вт","Ср","Чт","Пт","Сб"];
+  const bestW = bestAvgByKey(curr.posts, p => dayjs(p._date).day(), p => (p.LikesN || toInt(p.Likes)));
+
+  $("bestHour").innerText = bestH ? `${String(bestH.key).padStart(2,"0")}:00` : "—";
+  $("bestHourMeta").innerText = bestH ? `avg ${Math.round(bestH.avg).toLocaleString()} · n=${bestH.count}` : "—";
+
+  $("bestWeekday").innerText = bestW ? weekNames[Number(bestW.key)] : "—";
+  $("bestWeekdayMeta").innerText = bestW ? `avg ${Math.round(bestW.avg).toLocaleString()} · n=${bestW.count}` : "—";
+
+  $("statDeleted").innerText = curr.deletedPosts.length.toLocaleString();
+  if (curr.deletedPosts.length) {
+    const lifedays = curr.deletedPosts
+      .map(p => {
+        const c = p.CreatedAt ? dayjs(p.CreatedAt) : null;
+        const del = p.DeletedAt ? dayjs(p.DeletedAt) : null;
+        if (!c || !del) return null;
+        return del.diff(c, 'day', true);
+      })
+      .filter(x => x !== null && Number.isFinite(x));
+
+    if (lifedays.length) {
+      const avgLife = lifedays.reduce((a,b)=>a+b,0) / lifedays.length;
+      $("statDeletedLife").innerText = `ср жизнь: ${avgLife.toFixed(1)} дн`;
+    } else {
+      $("statDeletedLife").innerText = "ср жизнь: —";
+    }
+  } else {
+    $("statDeletedLife").innerText = "—";
+  }
+
+  $("statNewFollowers").innerText = curr.followers.length.toLocaleString();
+  const net = curr.followers.length - curr.following.length;
+  $("statNet").innerText = `нетто: ${net >= 0 ? "+" : ""}${net.toLocaleString()} (followers - following)`;
+
+  const topPosts = curr.posts
+    .slice()
+    .sort((a,b) => (b.LikesN||0) - (a.LikesN||0))
+    .slice(0, 15);
+
+  $("topPostsTableBody").innerHTML = topPosts.length ? topPosts.map(p => `
+    <tr class="border-b border-[#222] hover:bg-[#111] align-top">
+      <td class="p-3 text-gray-500 whitespace-nowrap">${dayjs(p._date).format("DD.MM")}</td>
+      <td class="p-3 text-right font-bold text-white">${(p.LikesN||0).toLocaleString()}</td>
+      <td class="p-3 text-gray-300">${(p.Sound || "—").slice(0, 70)}</td>
+      <td class="p-3 text-center">${p.Link ? `<a href="${p.Link}" target="_blank" class="text-purple-300 underline">↗</a>` : ""}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="4" class="p-4 text-center text-gray-600">Нет постов</td></tr>`;
+
+  const soundMap = new Map();
+  curr.posts.forEach(p => {
+    const s = (p.Sound || "").trim() || "—";
+    const curS = soundMap.get(s) || { count: 0, likesSum: 0 };
+    curS.count++;
+    curS.likesSum += (p.LikesN || 0);
+    soundMap.set(s, curS);
+  });
+
+  const topSounds = Array.from(soundMap.entries())
+    .map(([sound, v]) => ({ sound, ...v, avg: v.count ? v.likesSum / v.count : 0 }))
+    .sort((a,b) => b.count - a.count)
+    .slice(0, 20);
+
+  $("topSoundsPostsTableBody").innerHTML = topSounds.length ? topSounds.map(x => `
+    <tr class="border-b border-[#222] hover:bg-[#111]">
+      <td class="p-3 text-gray-300">${String(x.sound).slice(0, 80)}</td>
+      <td class="p-3 text-right text-white font-bold">${x.count}</td>
+      <td class="p-3 text-right text-gray-300">${Math.round(x.avg).toLocaleString()}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="3" class="p-4 text-center text-gray-600">Нет данных по звукам</td></tr>`;
+
+  const warns = [];
+  if (!curr.watch.length && (curr.likes.length || curr.comments.length)) warns.push("Watch History пустая");
+  if (!curr.posts.length) warns.push("Posts пустые/не найдены");
+  $("dataWarnings").innerText = warns.length ? ("⚠ " + warns.join(" · ")) : "";
+
+  // ---------- 1. VIEWS & TIME ----------
+  $("mViews").innerText = curr.watch.length.toLocaleString();
+
+  const sessions = computeSessions(curr.watch, 30);
+  $("mSessions").innerText = sessions.length.toLocaleString();
+  const avgPerSession = sessions.length ? (sessions.reduce((a,s)=>a+s.count,0) / sessions.length) : 0;
+  $("mSessionAvg").innerText = sessions.length ? avgPerSession.toFixed(1) : "—";
+
+  const totalSeconds = curr.watch.length * 20;
+  const hours = Math.floor(totalSeconds / 3600);
+  const days = totalSeconds / 86400;
+  $("mTime").innerText = hours > 0 ? (hours + " ч") : "0 ч";
+  $("mDays").innerText = "≈ " + days.toFixed(1) + " дн";
+
+  if (curr.watch.length === 0 && (curr.likes.length > 0 || curr.comments.length > 0)) $("alertBox").classList.remove("hidden");
+  else $("alertBox").classList.add("hidden");
+
+  // ---------- 2. LIKES ----------
+  $("mLikes").innerText = curr.likes.length.toLocaleString();
+
+  if (curr.likes.length > 0) {
+    const first = curr.likes[0];
+    const last = curr.likes[curr.likes.length - 1];
+
+    $("firstLikeDate").innerText = dayjs(first._date).format("DD MMM HH:mm");
+    $("lastLikeDate").innerText = dayjs(last._date).format("DD MMM HH:mm");
+
+    $("firstLikeDateBox").innerText = dayjs(first._date).format("DD MMM HH:mm");
+    $("firstLikeLink").href = first.Link || "#";
+
+    $("lastLikeDateBox").innerText = dayjs(last._date).format("DD MMM HH:mm");
+    $("lastLikeLink").href = last.Link || "#";
+
+    $("likesTableBody").innerHTML = curr.likes
+      .slice()
+      .sort((a,b)=>b._date - a._date)
+      .slice(0, 200)
+      .map(l => `
+        <tr class="border-b border-[#222] hover:bg-[#111]">
+          <td class="p-3 text-gray-500">${dayjs(l._date).format("DD.MM HH:mm")}</td>
+          <td class="p-3 text-right"><a href="${l.Link || "#"}" target="_blank" class="text-neon-red underline hover:text-white">Смотреть</a></td>
+        </tr>`
+      ).join("");
+  } else {
+    $("firstLikeDate").innerText = "—";
+    $("lastLikeDate").innerText = "—";
+    $("firstLikeDateBox").innerText = "—";
+    $("lastLikeDateBox").innerText = "—";
+    $("firstLikeLink").href = "#";
+    $("lastLikeLink").href = "#";
+    $("likesTableBody").innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-600">Нет лайков</td></tr>';
+  }
+
+  // ---------- 3. COMMENTS ----------
+  $("mComments").innerText = curr.comments.length.toLocaleString();
+  if (curr.comments.length > 0) {
+    $("commentsTableBody").innerHTML = curr.comments
+      .slice()
+      .sort((a,b) => b._date - a._date)
+      .slice(0, 300)
+      .map(c => `
+        <tr class="border-b border-[#222] hover:bg-[#111] align-top">
+          <td class="p-3 text-gray-500 whitespace-nowrap">${dayjs(c._date).format("DD.MM HH:mm")}</td>
+          <td class="p-3 text-white break-words">${c.Comment || getCommentText(c)}</td>
+          <td class="p-3 text-center">${c.Link ? `<a href="${c.Link}" target="_blank" class="text-neon-cyan">↗</a>` : ''}</td>
+        </tr>`
+      ).join("");
+  } else {
+    $("commentsTableBody").innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-600">Нет комментариев</td></tr>';
+  }
+
+  const tokenCount = new Map();
+  curr.comments.forEach(c => {
+    for (const t of simpleTokenize(c.Comment || getCommentText(c))) {
+      tokenCount.set(t, (tokenCount.get(t) || 0) + 1);
+    }
+  });
+  const topTokens = Array.from(tokenCount.entries())
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0, 12);
+
+  $("topCommentToken").innerText = topTokens.length ? `${topTokens[0][0]} (${topTokens[0][1]})` : "—";
+  $("commentTokens").innerHTML = topTokens.length
+    ? topTokens.map(([t,c]) => `<span class="inline-block bg-[#111] border border-[#222] rounded px-2 py-1 mr-2 mb-2">${t}<span class="text-gray-500">×${c}</span></span>`).join("")
+    : "—";
+
+  // ---------- 4. DEEP DIVE ----------
+  $("statLiveWatch").innerText = curr.liveWatch.length;
+  $("statShop").innerText = curr.shop.length;
+  $("statSounds").innerText = curr.sounds.length;
+  $("statFollow").innerText = curr.following.length;
+
+  $("statOffTikTok").innerText = curr.offTikTok.length.toLocaleString();
+
+  renderSettingsBox();
+
+  if (curr.shop.length > 0) {
+    $("shopTableBody").innerHTML = curr.shop
+      .slice()
+      .sort((a,b)=>b._date - a._date)
+      .slice(0, 120)
+      .map(x => `
+        <tr class="border-b border-[#222] hover:bg-[#111]">
+          <td class="p-3 text-gray-500">${dayjs(x._date).format("DD.MM")}</td>
+          <td class="p-3 text-white">${x.Product || getShopItem(x)}</td>
+        </tr>
+      `).join("");
+  } else $("shopTableBody").innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-600">Нет покупок</td></tr>';
+
+  if (curr.sounds.length > 0) {
+    $("soundsTableBody").innerHTML = curr.sounds
+      .slice()
+      .sort((a,b)=>b._date - a._date)
+      .slice(0, 120)
+      .map(x => `
+        <tr class="border-b border-[#222] hover:bg-[#111]">
+          <td class="p-3 text-gray-500">${dayjs(x._date).format("DD.MM")}</td>
+          <td class="p-3 text-white">${x.Link ? `<a href="${x.Link}" target="_blank" class="hover:text-neon-cyan">${x.Sound || getSoundName(x)}</a>` : (x.Sound || getSoundName(x))}</td>
+        </tr>
+      `).join("");
+  } else $("soundsTableBody").innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-600">Нет треков</td></tr>';
+
+  if (curr.liveWatch.length > 0) {
+    $("liveTableBody").innerHTML = curr.liveWatch
+      .slice()
+      .sort((a,b)=>b._date - a._date)
+      .slice(0, 120)
+      .map(x => `
+        <tr class="border-b border-[#222] hover:bg-[#111]">
+          <td class="p-3 text-gray-500">${dayjs(x._date).format("DD.MM HH:mm")}</td>
+          <td class="p-3">${x.Link ? `<a href="${x.Link}" target="_blank" class="text-neon-red underline">Открыть</a>` : `<span class="text-gray-600">—</span>`}</td>
+        </tr>
+      `).join("");
+  } else $("liveTableBody").innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-600">Нет истории Live</td></tr>';
+
+  if (curr.following.length > 0) {
+    $("followTableBody").innerHTML = curr.following
+      .slice()
+      .sort((a,b)=>b._date - a._date)
+      .slice(0, 150)
+      .map(x => `
+        <tr class="border-b border-[#222] hover:bg-[#111]">
+          <td class="p-3 text-gray-500">${dayjs(x._date).format("DD.MM")}</td>
+          <td class="p-3 text-white font-bold">@${x.User || getUserName(x)}</td>
+        </tr>
+      `).join("");
+  } else $("followTableBody").innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-600">Нет новых подписок</td></tr>';
+
+  const srcCount = new Map();
+  curr.offTikTok.forEach(x => {
+    const s = x.Source || "Unknown";
+    srcCount.set(s, (srcCount.get(s) || 0) + 1);
+  });
+  const topSources = Array.from(srcCount.entries()).sort((a,b)=>b[1]-a[1]).slice(0, 30);
+  $("offTikTokTableBody").innerHTML = topSources.length
+    ? topSources.map(([s,c]) => `
+      <tr class="border-b border-[#222] hover:bg-[#111]">
+        <td class="p-3 text-gray-300">${String(s).slice(0, 80)}</td>
+        <td class="p-3 text-right text-white font-bold">${c}</td>
+      </tr>
+    `).join("")
+    : `<tr><td colspan="2" class="p-4 text-center text-gray-600">Нет Off-TikTok активности</td></tr>`;
+
+  // ---------- 5. SECURITY & MESSAGES ----------
+  $("statLogins").innerText = curr.logins.length.toLocaleString();
+
+  const deviceCount = new Map();
+  const ipCount = new Set();
+
+  curr.logins.forEach(l => {
+    const dev = (l.DeviceModel || "Unknown").trim();
+    deviceCount.set(dev, (deviceCount.get(dev) || 0) + 1);
+    if (l.IP) ipCount.add(l.IP);
+  });
+
+  const devicesSorted = Array.from(deviceCount.entries()).sort((a,b)=>b[1]-a[1]);
+  $("statDevices").innerText = devicesSorted.length.toLocaleString();
+  $("statIPs").innerText = ipCount.size.toLocaleString();
+
+  const firstSeen = new Map(); // device -> date
+  d.logins.forEach(l => {
+    const dev = (l.DeviceModel || "Unknown").trim();
+    const t = l._date?.getTime?.() || null;
+    if (!t) return;
+    const prev = firstSeen.get(dev);
+    if (!prev || t < prev) firstSeen.set(dev, t);
+  });
+  const newDevicesInPeriod = devicesSorted.filter(([dev]) => {
+    const t = firstSeen.get(dev);
+    if (!t) return false;
+    const y = getYear(new Date(t));
+    return (year === "ALL") ? true : (y === year);
+  }).length;
+  $("statNewDevices").innerText = (year === "ALL") ? "—" : newDevicesInPeriod.toLocaleString();
+
+  $("devicesTableBody").innerHTML = devicesSorted.length
+    ? devicesSorted.slice(0, 40).map(([dev,c]) => `
+      <tr class="border-b border-[#222] hover:bg-[#111]">
+        <td class="p-3 text-gray-300">${String(dev).slice(0, 50)}</td>
+        <td class="p-3 text-right text-white font-bold">${c}</td>
+      </tr>
+    `).join("")
+    : `<tr><td colspan="2" class="p-4 text-center text-gray-600">Нет истории логинов</td></tr>`;
+
+  $("statDMs").innerText = curr.dms.length.toLocaleString();
+  const myUsername = (STATE.profile?.userName || STATE.profile?.username || "").toLowerCase();
+
+  let inCnt = 0, outCnt = 0;
+  const chatCount = new Map();
+
+  curr.dms.forEach(m => {
+    const chat = m.Chat || "Chat";
+    chatCount.set(chat, (chatCount.get(chat) || 0) + 1);
+
+    const from = String(m.From || "").toLowerCase();
+    if (myUsername && from === myUsername) outCnt++;
+    else inCnt++;
+  });
+
+  $("statDMsInOut").innerText = `вход: ${inCnt.toLocaleString()} · исход: ${outCnt.toLocaleString()}`;
+
+  const chatsSorted = Array.from(chatCount.entries()).sort((a,b)=>b[1]-a[1]);
+  $("statTopChat").innerText = chatsSorted.length ? chatsSorted[0][0] : "—";
+  $("statTopChatCount").innerText = chatsSorted.length ? `сообщений: ${chatsSorted[0][1]}` : "—";
+
+  $("chatsTableBody").innerHTML = chatsSorted.length
+    ? chatsSorted.slice(0, 40).map(([chat,c]) => `
+      <tr class="border-b border-[#222] hover:bg-[#111]">
+        <td class="p-3 text-gray-300">${String(chat).slice(0, 60)}</td>
+        <td class="p-3 text-right text-white font-bold">${c}</td>
+      </tr>
+    `).join("")
+    : `<tr><td colspan="2" class="p-4 text-center text-gray-600">Нет сообщений</td></tr>`;
+
+  // ---------- SEARCH LIST ----------
+  const sCount = {};
+  curr.searches.forEach(x => {
+    const t = x.SearchTerm || x.searchTerm || x.Term || "—";
+    sCount[t] = (sCount[t] || 0) + 1;
+  });
+  const topS = Object.entries(sCount).sort((a,b)=>b[1]-a[1]).slice(0, 20);
+  $("searchList").innerHTML = topS.map(([t,c], i) => `
+      <div class="flex justify-between items-center hover:bg-white/5 p-2 rounded transition">
+          <div class="flex items-center gap-3 overflow-hidden">
+              <span class="text-xs font-mono text-gray-600 w-4">${i+1}</span>
+              <span class="truncate text-gray-300 text-sm">${t}</span>
+          </div>
+          <span class="text-xs text-neon-cyan font-bold">${c}</span>
+      </div>
+  `).join("") || '<div class="text-gray-600 text-sm">Пусто</div>';
+
+  // ---------- SHARE LIST ----------
+  const shCount = {};
+  curr.shares.forEach(x => {
+    const m = x.Method || x.method || "Unknown";
+    shCount[m] = (shCount[m] || 0) + 1;
+  });
+  const sharesTotal = Math.max(1, curr.shares.length);
+  $("shareList").innerHTML = Object.entries(shCount)
+    .sort((a,b)=>b[1]-a[1])
+    .map(([m,c]) => `
+      <div class="text-sm">
+          <div class="flex justify-between mb-1">
+            <span class="text-gray-400 font-bold uppercase text-xs">${m}</span>
+            <span class="text-white">${c}</span>
+          </div>
+          <div class="h-1.5 bg-[#222] rounded-full overflow-hidden">
+            <div class="h-full bg-gray-500" style="width: ${(c/sharesTotal)*100}%"></div>
+          </div>
+      </div>
+  `).join("") || '<div class="text-gray-600 text-sm">Пусто</div>';
+
+  // ---------- POSTS TABLE ----------
+  const sortedPosts = curr.posts.slice().sort((a,b) => (b.LikesN||0) - (a.LikesN||0));
+  $("postsTableBody").innerHTML = sortedPosts.map(p => `
+      <tr class="border-b border-[#222] hover:bg-[#111]">
+          <td class="pl-2 py-3 text-gray-500">${dayjs(p._date).format("DD.MM")}</td>
+          <td class="py-3 font-bold text-white">${(p.LikesN||0).toLocaleString()}</td>
+          <td class="py-3">${p.Link ? `<a href="${p.Link}" target="_blank" class="text-neon-cyan underline text-xs">Link</a>` : `<span class="text-gray-600 text-xs">—</span>`}</td>
+      </tr>`).join("") || '<tr><td colspan="3" class="p-4 text-center text-gray-600">Нет загрузок</td></tr>';
+
+  renderCharts(curr);
+}
+
+function renderSettingsBox() {
+  const s = STATE.settings;
+  if (!s) { $("settingsBox").innerText = "—"; return; }
+
+  const pickKeys = [
+    "Private Account",
+    "Allow DownLoad",
+    "Allow Others to Find Me",
+    "Allow Reuse of Content",
+    "Personalized Ads",
+    "Filter Comments",
+    "App Language"
+  ];
+
+  const rows = [];
+  for (const k of pickKeys) {
+    if (Object.prototype.hasOwnProperty.call(s, k)) {
+      rows.push(`<div class="flex justify-between gap-6 border-b border-[#222] py-2">
+        <div class="text-gray-500">${k}</div>
+        <div class="text-white font-bold">${String(s[k])}</div>
+      </div>`);
+    }
+  }
+
+  $("settingsBox").innerHTML = rows.length
+    ? rows.join("")
+    : `<div class="text-gray-600">SettingsMap найден, но ключи отличаются. Можно расширить список полей под твой экспорт.</div>`;
+}
+
+// ---------- CHARTS ----------
+let chartV, chartL, chartC, chartP, chartSec;
+
+function renderCharts(curr) {
+  const labels = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
+
+  const postsCount = groupByMonthCount(curr.posts);
+  const postsLikesSum = groupByMonthSum(curr.posts, p => (p.LikesN || 0));
+  const loginsCount = groupByMonthCount(curr.logins);
+
+  if (chartV) chartV.destroy();
+  if (chartL) chartL.destroy();
+  if (chartC) chartC.destroy();
+  if (chartP) chartP.destroy();
+  if (chartSec) chartSec.destroy();
+
+  // Views
+  const ctxV = $("chartViews").getContext('2d');
+  const gradV = ctxV.createLinearGradient(0,0,0,300);
+  gradV.addColorStop(0, 'rgba(255,255,255,0.12)');
+  gradV.addColorStop(1, 'rgba(255,255,255,0)');
+  chartV = new Chart(ctxV, {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'Просмотры', data: groupByMonthCount(curr.watch), borderColor: '#fff', backgroundColor: gradV, fill: true, tension: 0.4, borderWidth: 2, pointRadius: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}},
+      scales: { x: {grid: {display: false}, ticks: {color: '#555'}}, y: {grid: {color: '#222'}} } }
+  });
+
+  // Likes
+  const ctxL = $("chartLikes").getContext('2d');
+  chartL = new Chart(ctxL, {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'Лайки', data: groupByMonthCount(curr.likes), borderColor: '#FE2C55', backgroundColor: '#FE2C55', tension: 0.4, borderWidth: 2, pointRadius: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}},
+      scales: { x: {grid: {display: false}, ticks: {color: '#555'}}, y: {grid: {color: '#222'}} } }
+  });
+
+  // Comments
+  const ctxC = $("chartComments").getContext('2d');
+  chartC = new Chart(ctxC, {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'Комменты', data: groupByMonthCount(curr.comments), borderColor: '#25F4EE', backgroundColor: '#25F4EE', tension: 0.4, borderWidth: 2, pointRadius: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}},
+      scales: { x: {grid: {display: false}, ticks: {color: '#555'}}, y: {grid: {color: '#222'}} } }
+  });
+
+  // Posts + likes sum
+  const ctxP = $("chartPosts").getContext('2d');
+  chartP = new Chart(ctxP, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Посты', data: postsCount, borderColor: '#A78BFA', backgroundColor: 'rgba(167,139,250,0.35)', borderWidth: 1, yAxisID: 'y' },
+        { label: 'Лайки (сумма)', data: postsLikesSum, type: 'line', borderColor: '#FB7185', backgroundColor: '#FB7185', tension: 0.35, borderWidth: 2, pointRadius: 0, yAxisID: 'y1' }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#555' } },
+        y: { grid: { color: '#222' }, ticks: { color: '#555' }, title: { display: true, text: 'Посты' } },
+        y1: { position: 'right', grid: { display: false }, ticks: { color: '#555' }, title: { display: true, text: 'Лайки' } }
+      }
+    }
+  });
+
+  // Logins
+  const ctxS = $("chartLogins").getContext('2d');
+  chartSec = new Chart(ctxS, {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'Логины', data: loginsCount, borderColor: '#34D399', backgroundColor: '#34D399', tension: 0.35, borderWidth: 2, pointRadius: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}},
+      scales: { x: {grid: {display: false}, ticks: {color: '#555'}}, y: {grid: {color: '#222'}} } }
+  });
+}
+
+// ---------- EVENTS ----------
+$("fileInput").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+
+  try {
+    const years = await processFile(f);
+
+    const sel = $("yearSelect");
+    sel.innerHTML = years
+      .map(y => `<option value="${y}">${y === "ALL" ? "ALL (всё)" : y}</option>`)
+      .join("");
+
+    $("controls").classList.remove("hidden");
+    $("dashboard").classList.remove("hidden");
+    $("status").innerText = "";
+    $("status").classList.remove("loading");
+
+    // ВАЖНО: по умолчанию выбираем первый пункт (самый свежий год),
+    // а ALL будет в конце списка.
+    sel.value = years[0];
+    renderUI(sel.value);
+
+    sel.onchange = () => renderUI(sel.value);
+  } catch(e) {
+    console.error(e);
+    $("status").innerText = "Ошибка: " + e.message;
+    $("status").classList.remove("loading");
+  }
+});
+</script>
+</body>
+</html>
